@@ -23,7 +23,10 @@ class ConversationStore:
     - Perfect for single-user system
     """
 
-    def __init__(self, base_dir: str = "memory/conversations"):
+    def __init__(self, base_dir: str | Path | None = None):
+        if base_dir is None:
+            from axiom.config.settings import get_settings
+            base_dir = get_settings().AXIOM_HOME / "conversations"
         self._base = Path(base_dir)
         self._base.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
