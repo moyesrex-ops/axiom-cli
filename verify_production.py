@@ -86,6 +86,46 @@ async def test_cross_platform_paths():
     print("  Cross-platform paths: all absolute")
 
 
+async def test_connect_command_exists():
+    """Verify /connect is wired into the command dispatcher."""
+    from axiom.cli.app import AxiomApp
+    app = AxiomApp()
+    assert hasattr(app, '_handle_connect_command'), "Missing _handle_connect_command"
+    assert hasattr(app, '_connect_telegram'), "Missing _connect_telegram"
+    print("  /connect command: handler methods exist")
+
+
+async def test_telegram_bot_instance_var():
+    """Verify telegram_bot is an instance variable, not local."""
+    from axiom.cli.app import AxiomApp
+    app = AxiomApp()
+    assert hasattr(app, '_telegram_bot'), "Missing _telegram_bot instance var"
+    assert app._telegram_bot is None, "_telegram_bot should init as None"
+    print("  _telegram_bot: instance variable exists")
+
+
+async def test_system_prompt_allows_configuration():
+    """Verify system prompt no longer blocks token handling."""
+    from axiom.core.agent.prompts.system import build_system_prompt
+    prompt = build_system_prompt()
+    assert "Self-Configuration" in prompt, "Missing self-configuration section"
+    assert "NEVER lecture about security" in prompt, "Missing anti-lecture instruction"
+    assert "STORE IT" in prompt, "Missing store instruction"
+    # Should NOT contain the blanket ban
+    assert "Never expose API keys, passwords, or sensitive data in responses" not in prompt
+    print("  System prompt: allows self-configuration, no blanket ban")
+
+
+async def test_help_shows_connect():
+    """Verify /connect appears in help output."""
+    from axiom.cli.app import AxiomApp
+    import inspect
+    app = AxiomApp()
+    source = inspect.getsource(app._show_help)
+    assert "/connect" in source, "/connect not in help table"
+    print("  Help table: includes /connect command")
+
+
 async def main():
     print("\n=== Axiom Production Verification ===\n")
     tests = [
@@ -96,6 +136,10 @@ async def main():
         test_inject_uses_build,
         test_integrations_context_no_event_loop_crash,
         test_cross_platform_paths,
+        test_connect_command_exists,
+        test_telegram_bot_instance_var,
+        test_system_prompt_allows_configuration,
+        test_help_shows_connect,
     ]
     passed = 0
     failed = 0
