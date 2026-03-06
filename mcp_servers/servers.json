@@ -1,0 +1,37 @@
+{
+  "servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "description": "File system access (read/write files in current directory)",
+      "autoConnect": false
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      },
+      "description": "GitHub API (issues, PRs, repos, code search)",
+      "autoConnect": false
+    },
+    "sqlite": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite"],
+      "description": "SQLite database queries",
+      "autoConnect": false
+    },
+    "puppeteer": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "description": "Browser automation via Puppeteer",
+      "autoConnect": false
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "description": "Persistent memory store (key-value)",
+      "autoConnect": false
+    }
+  }
+}

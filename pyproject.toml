@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axiom-cli"
+version = "1.0.0"
+description = "Axiom — The Ultimate Local Autonomous AI Agent"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "moyes"}]
+
+dependencies = [
+    # Universal LLM Interface
+    "litellm>=1.50.0",
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+
+    # CLI
+    "rich>=14.0.0",
+    "prompt-toolkit>=3.0.47",
+
+    # Browser
+    "playwright>=1.48.0",
+
+    # Memory
+    "chromadb>=0.5.0",
+
+    # Research + HTTP
+    "httpx>=0.27.0",
+    "beautifulsoup4>=4.12.0",
+
+    # Config
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "python-dotenv>=1.0.1",
+
+    # Async
+    "aiofiles>=24.1.0",
+]
+
+[project.optional-dependencies]
+full = [
+    # Extra LLM providers
+    "google-cloud-aiplatform>=1.70.0",
+    "google-generativeai>=0.8.0",
+    "groq>=0.11.0",
+    "together>=1.3.0",
+    "mistralai>=1.2.0",
+    "cohere>=5.11.0",
+
+    # Desktop automation (GOD MODE)
+    "pyautogui>=0.9.54",
+    "Pillow>=10.4.0",
+    "pytesseract>=0.3.13",
+    "opencv-python>=4.10.0",
+
+    # Voice input (Whisper STT)
+    "openai-whisper>=20231117",
+    "sounddevice>=0.5.0",
+
+    # Semantic search (code embeddings)
+    "sentence-transformers>=3.0.0",
+
+    # Research APIs
+    "tavily-python>=0.5.0",
+    "exa-py>=1.0.0",
+
+    # MCP client
+    "mcp>=1.0.0",
+
+    # GitHub API
+    "PyGithub>=2.4.0",
+
+    # Telegram bridge
+    "python-telegram-bot>=21.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+axiom = "axiom.main:main"
+axm = "axiom.main:main"
+
+
+[tool.setuptools.packages.find]
+include = ["axiom*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["asyncio: marks tests as async"]

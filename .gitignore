@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Memory (large/personal data)
+memory/chroma/
+memory/conversations/*.jsonl
+memory/tasks/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Playwright
+playwright-browsers/
+
+# Logs
+*.log
+
+# Temp
+nul
+
+# Keep structure
+!memory/.gitkeep
+!memory/sessions/.gitkeep
+!memory/facts/.gitkeep
+!memory/skills/.gitkeep
+!memory/conversations/.gitkeep
+!memory/tasks/.gitkeep
+!tools/.gitkeep
+!agents/.gitkeep
+!workspace/.gitkeep
