@@ -512,6 +512,10 @@ class AxiomApp:
             await self._handle_selftest_command()
             return False
 
+        if command == "/connect":
+            await self._handle_connect_command(arg)
+            return False
+
         if command == "/council":
             if not arg:
                 console.print(
@@ -877,6 +881,130 @@ class AxiomApp:
             f"\n[{color}]{passed}/{total} checks passed ({pct}%)[/]\n"
         )
 
+    # ── /connect command ──────────────────────────────────────────
+
+    async def _handle_connect_command(self, arg: str) -> None:
+        """Handle /connect <service> [config] — connect integrations live."""
+        parts = arg.strip().split(maxsplit=1)
+        if not parts:
+            console.print(
+                f"[{AXIOM_CYAN}]Usage:[/]\n"
+                f"  /connect telegram <bot_token>\n"
+                f"  /connect telegram disconnect"
+            )
+            return
+
+        service = parts[0].lower()
+        config = parts[1].strip() if len(parts) > 1 else ""
+
+        if service == "telegram":
+            await self._connect_telegram(config)
+        else:
+            console.print(
+                f"[{AXIOM_YELLOW}]Unknown service:[/] {service}. "
+                f"Available: telegram"
+            )
+
+    async def _connect_telegram(self, token_or_cmd: str) -> None:
+        """Connect or disconnect Telegram bot live."""
+        from dotenv import set_key
+
+        env_path = self.settings.AXIOM_HOME / ".env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # ── Disconnect ──────────────────────────────────────────
+        if token_or_cmd.lower() == "disconnect":
+            if self._telegram_bot is not None:
+                try:
+                    await self._telegram_bot.stop()
+                except Exception:
+                    pass
+                self._telegram_bot = None
+                self._telegram_active = False
+            set_key(str(env_path), "TELEGRAM_ENABLED", "false")
+            console.print(f"[{AXIOM_GREEN}]✓ Telegram disconnected.[/]")
+            return
+
+        # ── Connect — need a token ──────────────────────────────
+        token = token_or_cmd.strip()
+        if not token:
+            console.print(
+                f"[{AXIOM_YELLOW}]Please provide your bot token:[/]\n"
+                f"  /connect telegram <your_bot_token>"
+            )
+            return
+
+        # Validate token format (basic check: contains colon)
+        if ":" not in token:
+            console.print(
+                f"[{AXIOM_RED}]Invalid token format.[/] "
+                f"Telegram bot tokens look like: 123456:ABC-DEF..."
+            )
+            return
+
+        # Stop existing bot if running
+        if self._telegram_bot is not None:
+            try:
+                await self._telegram_bot.stop()
+            except Exception:
+                pass
+            self._telegram_bot = None
+            self._telegram_active = False
+
+        # Write token to ~/.axiom/.env
+        console.print(f"[{AXIOM_DIM}]Writing config to {env_path}...[/]")
+        set_key(str(env_path), "TELEGRAM_BOT_TOKEN", token)
+        set_key(str(env_path), "TELEGRAM_ENABLED", "true")
+
+        # Reload settings
+        get_settings.cache_clear()
+        self.settings = get_settings()
+
+        # Hot-start Telegram bot
+        try:
+            from axiom.integrations.telegram.bridge import TelegramBridge
+            from axiom.integrations.telegram.handler import TelegramBot
+
+            allowed_users = None
+            if self.settings.TELEGRAM_ALLOWED_USERS:
+                try:
+                    allowed_users = {
+                        int(uid.strip())
+                        for uid in self.settings.TELEGRAM_ALLOWED_USERS.split(",")
+                        if uid.strip()
+                    }
+                except ValueError:
+                    pass
+
+            tg_bridge = TelegramBridge(app=self)
+            self._telegram_bot = TelegramBot(
+                token=token,
+                bridge=tg_bridge,
+                allowed_users=allowed_users,
+            )
+            await self._telegram_bot.start()
+            self._telegram_active = True
+
+            # Re-inject system prompt so LLM knows Telegram is now active
+            for i, msg in enumerate(self.messages):
+                if msg.get("role") == "system":
+                    self.messages.pop(i)
+                    break
+            tasks_text = getattr(self, "_pending_tasks_text", "")
+            system_prompt = self._build_system_prompt("", tasks_text)
+            self.messages.insert(0, {"role": "system", "content": system_prompt})
+
+            console.print(
+                f"[{AXIOM_GREEN}]✓ Telegram bot CONNECTED and mirrored![/]\n"
+                f"[{AXIOM_DIM}]Token saved to {env_path}[/]\n"
+                f"[{AXIOM_DIM}]Bot will auto-start on next launch.[/]"
+            )
+        except Exception as exc:
+            console.print(
+                f"[{AXIOM_RED}]✗ Telegram connect failed: {str(exc)[:120]}[/]"
+            )
+            logger.warning("Telegram hot-connect failed: %s", exc)
+
     async def _handle_council_run(self, question: str) -> None:
         """Run a question through COUNCIL mode (multi-LLM consensus)."""
         try:
@@ -978,6 +1106,7 @@ class AxiomApp:
             ("/fix [context]", "GOD MODE: Self-diagnose and auto-repair errors"),
             ("/selftest", "GOD MODE: Verify all systems are operational"),
             ("/agents", "List running sub-agents"),
+            ("/connect telegram <token>", "Connect Telegram bot (writes config + starts mirroring)"),
             ("/mcp list", "List MCP server connections"),
             ("/mcp connect <name>", "Connect to an MCP server"),
             ("/voice", "Toggle voice input (Whisper STT)"),
