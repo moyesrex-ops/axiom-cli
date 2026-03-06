@@ -138,6 +138,7 @@ class TelegramBot:
         user_id = update.effective_user.id
         await update.message.chat.send_action("typing")
 
+        tmp_path: str | None = None
         try:
             # Download voice file
             voice = update.message.voice or update.message.audio
@@ -174,10 +175,11 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Voice error: {str(exc)[:200]}")
         finally:
             # Cleanup temp file
-            try:
-                Path(tmp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            if tmp_path:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle photo messages — describe via vision, then process with caption."""
@@ -187,6 +189,7 @@ class TelegramBot:
         user_id = update.effective_user.id
         await update.message.chat.send_action("typing")
 
+        tmp_path: str | None = None
         try:
             photo = update.message.photo[-1]  # Highest resolution
             file = await photo.get_file()
@@ -207,6 +210,13 @@ class TelegramBot:
         except Exception as exc:
             logger.error("Photo handler error: %s", exc)
             await update.message.reply_text(f"❌ Photo error: {str(exc)[:200]}")
+        finally:
+            # Cleanup temp file
+            if tmp_path:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     async def _handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle document uploads — save and process."""

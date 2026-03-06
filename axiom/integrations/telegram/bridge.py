@@ -171,8 +171,8 @@ class TelegramBridge:
         if cmd == "/clear":
             try:
                 await self.conversation_store.clear()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Conversation clear failed: %s", exc)
             return "🗑️ Conversation cleared and archived\\."
 
         if cmd == "/tasks":

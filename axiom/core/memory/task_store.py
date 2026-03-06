@@ -30,7 +30,10 @@ class TaskStore:
     - Query task history
     """
 
-    def __init__(self, path: str = "memory/tasks/tasks.json"):
+    def __init__(self, path: str | Path | None = None):
+        if path is None:
+            from axiom.config.settings import get_settings
+            path = get_settings().AXIOM_HOME / "tasks" / "tasks.json"
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()

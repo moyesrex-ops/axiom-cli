@@ -11,11 +11,31 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from axiom.config.defaults import MODEL_DEFAULTS
 
 
+def _find_env_file() -> str | None:
+    """Discover .env file from multiple locations (cross-platform)."""
+    import os
+
+    candidates = [
+        Path.cwd() / ".env",                              # Dev mode
+        Path.home() / ".axiom" / ".env",                   # User config
+        Path(__file__).resolve().parent.parent / ".env",   # Package root
+    ]
+    # Also check AXIOM_ENV_FILE override
+    override = os.environ.get("AXIOM_ENV_FILE")
+    if override:
+        candidates.insert(0, Path(override))
+
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
 class AxiomSettings(BaseSettings):
     """Central configuration loaded from environment / .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_find_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
     )

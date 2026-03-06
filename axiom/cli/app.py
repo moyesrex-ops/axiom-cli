@@ -278,8 +278,7 @@ class AxiomApp:
         try:
             from axiom.core.memory import MemoryManager
 
-            project_root = Path(os.getcwd())
-            memory_dir = str(project_root / "memory")
+            memory_dir = str(self.settings.AXIOM_HOME / "memory")
             self.memory = MemoryManager(memory_dir=memory_dir)
             stats = self.memory.get_stats()
             logger.debug(
@@ -1107,48 +1106,14 @@ class AxiomApp:
     def _inject_system_prompt(self, user_input: str = "") -> None:
         """Inject the system prompt as the first message (idempotent).
 
-        Called lazily on the first chat turn so the LLM knows its identity,
-        available tools, memory context, and relevant skills.
-        Does nothing if a system prompt already exists.
+        Delegates to _build_system_prompt() which includes all context:
+        tools, memory, skills, tasks, AND integrations.
         """
         if any(m.get("role") == "system" for m in self.messages):
             return  # Already injected
-        try:
-            from axiom.core.agent.prompts.system import build_system_prompt
 
-            tool_names = self.registry.list_names() if self.registry else []
-
-            memory_context = ""
-            if self.memory is not None:
-                try:
-                    memory_context = self.memory.build_context(user_input, k=3)
-                except Exception:
-                    pass
-
-            skills_context = ""
-            if self.skill_injector is not None:
-                try:
-                    skills_context = self.skill_injector.inject(user_input)
-                except Exception:
-                    pass
-
-            # Pending tasks are injected via _pending_tasks_text (set before chat())
-            tasks_context = getattr(self, "_pending_tasks_text", "")
-
-            system_prompt = build_system_prompt(
-                tool_names=tool_names,
-                memory_context=memory_context,
-                model_name=self.router.active_model if self.router else "unknown",
-                skills_context=skills_context,
-                tasks_context=tasks_context,
-            )
-        except Exception:
-            system_prompt = (
-                "You are Axiom, an advanced AI assistant. Be helpful, "
-                "accurate, and proactive.  Use available tools when they "
-                "would help accomplish the user's request."
-            )
-
+        tasks_text = getattr(self, "_pending_tasks_text", "")
+        system_prompt = self._build_system_prompt(user_input, tasks_text)
         self.messages.insert(0, {"role": "system", "content": system_prompt})
 
     # ── Agent mode ────────────────────────────────────────────────
@@ -1169,16 +1134,16 @@ class AxiomApp:
         if self.memory is not None:
             try:
                 memory_context = self.memory.build_context(task, k=5)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Agent memory context build failed: %s", exc)
 
         # Inject relevant skills for this task
         skills_context = ""
         if self.skill_injector is not None:
             try:
                 skills_context = self.skill_injector.inject(task)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Agent skills injection failed: %s", exc)
 
         # Build system prompt with tool names, memory, skills, and mode hint
         try:
@@ -1415,18 +1380,16 @@ class AxiomApp:
 
         # Persist to shared conversation store (mirrored with Telegram)
         try:
-            asyncio.ensure_future(
-                self.conversation_store.append("user", user_input, channel="cli")
-            )
-        except Exception:
-            pass
+            await self.conversation_store.append("user", user_input, channel="cli")
+        except Exception as exc:
+            logger.warning("Conversation store write failed: %s", exc)
 
         # Store user message in memory
         if self.memory is not None:
             try:
                 self.memory.store_message("user", user_input)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Memory store failed: %s", exc)
 
         # Auto-select model if in auto mode
         if self.model_switcher and self.model_switcher.auto_mode:
@@ -1442,8 +1405,8 @@ class AxiomApp:
 
             if await should_compress(self.messages):
                 await self._compact_history()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Context compression check failed: %s", exc)
 
         # Build tool schemas for function calling
         tools: Optional[list[dict[str, Any]]] = None
@@ -1514,18 +1477,16 @@ class AxiomApp:
                 if self.memory is not None:
                     try:
                         self.memory.store_message("assistant", full_response)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Memory store (assistant) failed: %s", exc)
 
                 # Persist to shared conversation store (mirrored)
                 try:
-                    asyncio.ensure_future(
-                        self.conversation_store.append(
-                            "assistant", full_response, channel="cli"
-                        )
+                    await self.conversation_store.append(
+                        "assistant", full_response, channel="cli"
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Conversation store write failed: %s", exc)
 
         except KeyboardInterrupt:
             self.renderer.stop_thinking()
@@ -1680,15 +1641,15 @@ class AxiomApp:
             if self.memory is not None:
                 try:
                     memory_context = self.memory.build_context(user_input, k=3)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Memory context build failed: %s", exc)
 
             skills_context = ""
             if self.skill_injector is not None:
                 try:
                     skills_context = self.skill_injector.inject(user_input)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Skills injection failed: %s", exc)
 
             # Build active integrations context
             integrations_context = self._build_integrations_context()
@@ -1711,7 +1672,8 @@ class AxiomApp:
 
     def _build_integrations_context(self) -> str:
         """Detect and describe active integrations for the system prompt."""
-        lines = []
+        lines: list[str] = []
+
         # Telegram bridge
         if getattr(self, "_telegram_active", False):
             lines.append(
@@ -1720,18 +1682,19 @@ class AxiomApp:
                 "Both CLI and Telegram share the same conversation history "
                 "via ConversationStore. The user can chat on either channel."
             )
-        # Conversation store stats
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Can't block — just note it's active
-                lines.append(
-                    "💾 **Shared Conversation Store**: Active (JSONL persistence). "
-                    "Messages from all channels are stored and shared."
-                )
-        except Exception:
-            pass
+
+        # Conversation store is always active
+        lines.append(
+            "💾 **Shared Conversation Store**: Active (JSONL persistence). "
+            "Messages from all channels are stored and shared across sessions."
+        )
+
+        # Task store
+        lines.append(
+            "📋 **Task Memory**: Active. Tasks persist across restarts. "
+            "The user can ask you to remember tasks, and you can track them."
+        )
+
         return "\n".join(lines)
 
     async def _execute_tool_calls(
