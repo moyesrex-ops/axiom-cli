@@ -85,6 +85,7 @@ class AxiomApp:
         self.yolo_mode: bool = False
         self.voice_mode: bool = False
         self._telegram_active: bool = False
+        self._telegram_bot: Any = None  # TelegramBot instance (set on connect)
 
         # ── Shared stores (mirrored Telegram + infinite memory) ────
         self.conversation_store = ConversationStore()
@@ -2146,7 +2147,7 @@ class AxiomApp:
             self.voice_mode = True
 
         # ── Telegram bot bridge (optional) ─────────────────────────
-        telegram_bot = None
+        # telegram_bot is self._telegram_bot (instance var for hot-connect)
         telegram_enabled = telegram or self.settings.TELEGRAM_ENABLED
         if telegram_enabled and self.settings.TELEGRAM_BOT_TOKEN:
             try:
@@ -2166,12 +2167,12 @@ class AxiomApp:
                         logger.warning("Invalid TELEGRAM_ALLOWED_USERS format")
 
                 tg_bridge = TelegramBridge(app=self)
-                telegram_bot = TelegramBot(
+                self._telegram_bot = TelegramBot(
                     token=self.settings.TELEGRAM_BOT_TOKEN,
                     bridge=tg_bridge,
                     allowed_users=allowed_users,
                 )
-                await telegram_bot.start()
+                await self._telegram_bot.start()
                 self._telegram_active = True
                 console.print(f"  [{AXIOM_GREEN}]✓ Telegram bot online (mirrored)[/]")
             except Exception as exc:
@@ -2179,7 +2180,7 @@ class AxiomApp:
                 console.print(
                     f"  [{AXIOM_YELLOW}]⚠ Telegram failed: {str(exc)[:80]}[/]"
                 )
-                telegram_bot = None
+                self._telegram_bot = None
 
         # ── Heartbeat daemon (optional) ────────────────────────────
         heartbeat_daemon = None
@@ -2325,9 +2326,9 @@ class AxiomApp:
                 logger.debug("Session save failed: %s", exc)
 
         # Stop Telegram bot if running
-        if telegram_bot is not None:
+        if self._telegram_bot is not None:
             try:
-                await telegram_bot.stop()
+                await self._telegram_bot.stop()
                 console.print(f"[{AXIOM_DIM}]Telegram bot stopped.[/]")
             except Exception as exc:
                 logger.debug("Telegram stop error: %s", exc)
