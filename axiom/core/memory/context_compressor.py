@@ -3,6 +3,9 @@
 When the conversation grows long, this module summarizes older messages
 into a compact form while preserving key information, achieving ~70-80%
 token reduction while maintaining continuity.
+
+**Critical:** Preserves tool_call → tool_result message pairing across
+the compression boundary to avoid litellm ``BadRequestError``.
 """
 
 from __future__ import annotations
@@ -56,41 +59,52 @@ async def compress_context(
 ) -> list[dict[str, Any]]:
     """Compress older messages into a summary while keeping recent ones.
 
-    Args:
-        router: UniversalRouter for LLM calls.
-        messages: Full conversation messages.
-        keep_recent: Number of recent messages to keep uncompressed.
-
-    Returns:
-        New message list with old messages replaced by a summary.
+    Preserves tool_call → tool_result pairing across the split boundary.
     """
-    # Separate system messages from conversation
     system_messages = [m for m in messages if m.get("role") == "system"]
     conversation = [m for m in messages if m.get("role") != "system"]
 
     if len(conversation) <= keep_recent:
-        return messages  # Nothing to compress
+        return messages
 
-    # Split into old (to compress) and recent (to keep)
-    old_messages = conversation[:-keep_recent]
-    recent_messages = conversation[-keep_recent:]
+    # Find safe split point that doesn't break tool chains
+    split_idx = len(conversation) - keep_recent
+    split_idx = _find_safe_split(conversation, split_idx)
 
-    # Format old messages for summarization
+    if split_idx <= 0:
+        return messages  # Can't compress safely
+
+    old_messages = conversation[:split_idx]
+    recent_messages = conversation[split_idx:]
+
+    # Validate: recent_messages must not start with a tool response
+    # that references a tool_call in old_messages
+    if not _validate_message_pairing(recent_messages):
+        logger.warning("Cannot compress: tool pairing would break")
+        return messages
+
+    # Format old messages for summarization (preserve tool metadata)
     formatted_old = []
     for msg in old_messages:
         role = msg.get("role", "unknown")
         content = str(msg.get("content", ""))[:500]
-        formatted_old.append(f"[{role}]: {content}")
+        if role == "assistant" and "tool_calls" in msg:
+            tool_names = [
+                tc.get("function", {}).get("name", "?")
+                for tc in msg.get("tool_calls", [])
+                if isinstance(tc, dict)
+            ]
+            formatted_old.append(f"[{role}]: Called tools: {', '.join(tool_names)}")
+        elif role == "tool":
+            tool_name = msg.get("name", "unknown")
+            formatted_old.append(f"[tool:{tool_name}]: {content}")
+        else:
+            formatted_old.append(f"[{role}]: {content}")
 
     conversation_text = "\n".join(formatted_old)
-
-    # Generate summary using LLM
     summary = await _generate_summary(router, conversation_text)
 
-    # Build compressed message list
     compressed: list[dict[str, Any]] = list(system_messages)
-
-    # Add summary as a system message
     if summary:
         compressed.append({
             "role": "system",
@@ -99,20 +113,73 @@ async def compress_context(
                 f"{summary}"
             ),
         })
-
-    # Add recent uncompressed messages
     compressed.extend(recent_messages)
-
-    old_count = len(messages)
-    new_count = len(compressed)
-    reduction = ((old_count - new_count) / old_count * 100) if old_count > 0 else 0
 
     logger.info(
         "Context compressed: %d -> %d messages (%.0f%% reduction)",
-        old_count, new_count, reduction,
+        len(messages), len(compressed),
+        ((len(messages) - len(compressed)) / len(messages) * 100),
     )
-
     return compressed
+
+
+def _find_safe_split(conversation: list[dict[str, Any]], target_idx: int) -> int:
+    """Find the nearest split point that doesn't break a tool_call → tool chain.
+
+    Scans backward from target_idx to find a position where:
+    - The message at split_idx is NOT a 'tool' role message
+    - The message at split_idx-1 does NOT have 'tool_calls'
+    """
+    idx = target_idx
+    # Scan backward up to 10 positions to find a safe split
+    for _ in range(min(10, idx)):
+        if idx <= 0:
+            return 0
+        msg_at_split = conversation[idx]
+        msg_before_split = conversation[idx - 1]
+
+        # Bad: recent starts with tool response
+        if msg_at_split.get("role") == "tool":
+            idx -= 1
+            continue
+        # Bad: last old message has tool_calls (its results are in recent)
+        if "tool_calls" in msg_before_split:
+            idx -= 1
+            continue
+        # Safe split found
+        return idx
+
+    # If we couldn't find a safe point, try scanning forward
+    idx = target_idx
+    for _ in range(min(10, len(conversation) - idx)):
+        if idx >= len(conversation):
+            return len(conversation)
+        msg_at_split = conversation[idx]
+        if msg_at_split.get("role") != "tool" and (
+            idx == 0 or "tool_calls" not in conversation[idx - 1]
+        ):
+            return idx
+        idx += 1
+
+    return target_idx  # Give up, use original
+
+
+def _validate_message_pairing(messages: list[dict[str, Any]]) -> bool:
+    """Validate that tool responses have matching tool_calls in the same list."""
+    pending_tool_call_ids: set[str] = set()
+
+    for msg in messages:
+        if msg.get("role") == "assistant" and "tool_calls" in msg:
+            for tc in msg.get("tool_calls", []):
+                if isinstance(tc, dict) and "id" in tc:
+                    pending_tool_call_ids.add(tc["id"])
+        elif msg.get("role") == "tool" and "tool_call_id" in msg:
+            tc_id = msg["tool_call_id"]
+            if tc_id not in pending_tool_call_ids:
+                return False  # Orphaned tool response
+            pending_tool_call_ids.discard(tc_id)
+
+    return True
 
 
 async def _generate_summary(router: Any, conversation_text: str) -> str:
