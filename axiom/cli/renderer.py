@@ -438,6 +438,65 @@ class StreamRenderer:
         )
         self._console.print(panel)
 
+    # ── Compact Tool Display (default) ─────────────────────────────────
+
+    def show_tool_call_compact(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> None:
+        """Render a tool invocation as a single quiet line.
+
+        Example output::
+
+            ⚡ bash  mkdir calorie_counter
+            ⚡ grep  "Flask" in *.py
+            ⚡ memory_search  calorie counter website deploy
+        """
+        preview = _compact_args_preview(tool_name, args)
+        self._console.print(
+            Text.from_markup(
+                f"  [{AXIOM_PURPLE}]\u26a1 {tool_name}[/]"
+                + (f"  [{AXIOM_DIM}]{preview}[/]" if preview else "")
+            )
+        )
+
+    def show_tool_result_compact(
+        self,
+        tool_name: str,
+        result: str,
+        success: bool = True,
+        duration_ms: int = 0,
+    ) -> None:
+        """Render a tool result as a single quiet line.
+
+        Shows full error details when ``success=False``.
+
+        Example output::
+
+            ✓ bash (42ms)
+            ✓ glob — 169 files (254ms)
+            ✗ bash — command not found
+        """
+        icon = "\u2713" if success else "\u2717"
+        color = AXIOM_GREEN if success else AXIOM_RED
+        dur = f" ({duration_ms}ms)" if duration_ms > 0 else ""
+        summary = _compact_result_summary(tool_name, result, success)
+
+        self._console.print(
+            Text.from_markup(
+                f"  [{color}]{icon}[/] [{AXIOM_DIM}]{tool_name}{dur}[/]"
+                + (f"  {summary}" if summary else "")
+            )
+        )
+
+        # Errors always get details — but compact, no panel
+        if not success and result:
+            err_preview = result[:300].split("\n")[0]
+            self._console.print(
+                Text.from_markup(f"    [{AXIOM_RED}]{err_preview}[/]")
+            )
+
     # ── Agent Trace ───────────────────────────────────────────────────────
 
     def show_agent_trace(self, trace: dict[str, Any]) -> None:
@@ -505,3 +564,99 @@ def _format_args(args: dict[str, Any], max_value_len: int = 300) -> str:
         return json.dumps(truncated, indent=2, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
         return str(truncated)
+
+
+# ── Compact display helpers ──────────────────────────────────────────────────
+
+# Tools whose single most-important arg we know how to extract.
+_ARG_PRIORITY: dict[str, tuple[str, ...]] = {
+    "bash": ("command",),
+    "grep": ("pattern", "path"),
+    "glob": ("pattern", "path"),
+    "read_file": ("path", "file_path"),
+    "write_file": ("path", "file_path"),
+    "create_file": ("path", "file_path"),
+    "memory_search": ("query",),
+    "memory_save": ("content",),
+    "web_search": ("query",),
+    "http_request": ("url", "method"),
+}
+
+
+def _compact_args_preview(tool_name: str, args: dict[str, Any]) -> str:
+    """Extract a short, human-readable preview of a tool's arguments.
+
+    Returns at most ~100 chars — enough for context, never overwhelming.
+    """
+    if not args:
+        return ""
+
+    # Try known priority keys first
+    priority_keys = _ARG_PRIORITY.get(tool_name, ())
+    for key in priority_keys:
+        if key in args:
+            val = str(args[key])
+            return val[:100] + ("..." if len(val) > 100 else "")
+
+    # Fallback: first string-valued arg
+    for key, val in args.items():
+        if isinstance(val, str) and val:
+            preview = val[:80]
+            return f"{key}={preview}" + ("..." if len(val) > 80 else "")
+
+    return ""
+
+
+def _compact_result_summary(
+    tool_name: str, result: str, success: bool
+) -> str:
+    """Extract a short summary from tool output for the compact display.
+
+    Returns a dim-styled string like ``"— 5 results"`` or ``""`` if
+    there is nothing worth summarizing.
+    """
+    if not success:
+        return ""  # error details shown separately
+
+    if not result:
+        return ""
+
+    lower = tool_name.lower()
+
+    # glob / grep — count matches
+    if lower in ("glob", "grep"):
+        first_line = result.split("\n", 1)[0]
+        if "no match" in first_line.lower() or "0 " in first_line:
+            return "-- no matches"
+        # Try to extract count from first line like "Found 12 files..."
+        for word in first_line.split():
+            if word.isdigit():
+                label = "files" if "glob" in lower else "matches"
+                return f"-- {word} {label}"
+        lines = result.strip().split("\n")
+        return f"-- {len(lines)} items"
+
+    # memory_search — count results
+    if "memory" in lower and "search" in lower:
+        for word in result.split():
+            if word.isdigit():
+                return f"-- {word} results"
+        return ""
+
+    # bash — show first non-empty line of output
+    if lower == "bash":
+        for line in result.split("\n"):
+            stripped = line.strip()
+            if stripped:
+                if len(stripped) > 80:
+                    return f"-- {stripped[:77]}..."
+                return f"-- {stripped}"
+        return ""
+
+    # read_file — show line count
+    if lower in ("read_file",):
+        lines = result.count("\n")
+        return f"-- {lines} lines"
+
+    # Default: nothing (keep it clean)
+    return ""

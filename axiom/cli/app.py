@@ -1939,29 +1939,30 @@ class AxiomApp:
                     })
                     continue
 
-            # Show the tool call panel
-            self.renderer.show_tool_call(tool_name, tool_args, risk)
+            # Show tool call — compact by default, full panels only in /trace
+            if self.trace_mode:
+                self.renderer.show_tool_call(tool_name, tool_args, risk)
+            else:
+                self.renderer.show_tool_call_compact(tool_name, tool_args)
 
-            # Execute the tool with GOD MODE error interception
+            # Execute the tool
             try:
                 record = await self.registry.invoke(tool_name, **tool_args)
-                self.renderer.show_tool_result(
-                    tool_name,
-                    record.result,
-                    record.success,
-                    int(record.duration_ms),
-                )
 
-                # ── GOD MODE: Capture tool failures for self-repair ──
-                if not record.success:
-                    try:
-                        from axiom.core.tools.self_repair import SelfRepairTool
-                        tool_err = Exception(
-                            f"Tool '{tool_name}' failed: {record.result[:500]}"
-                        )
-                        SelfRepairTool.capture_error(tool_err, "")
-                    except Exception:
-                        pass
+                if self.trace_mode:
+                    self.renderer.show_tool_result(
+                        tool_name,
+                        record.result,
+                        record.success,
+                        int(record.duration_ms),
+                    )
+                else:
+                    self.renderer.show_tool_result_compact(
+                        tool_name,
+                        record.result,
+                        record.success,
+                        int(record.duration_ms),
+                    )
 
                 # Append tool result to conversation
                 self.messages.append({
@@ -1971,19 +1972,13 @@ class AxiomApp:
                 })
 
             except Exception as tool_exc:
-                # Tool invocation itself crashed — capture for self-repair
                 import traceback as _tb
                 tb_str = _tb.format_exc()
                 error_result = f"Tool '{tool_name}' crashed: {tool_exc}"
-                self.renderer.show_tool_result(
+                # Errors always show full detail
+                self.renderer.show_tool_result_compact(
                     tool_name, error_result, False, 0,
                 )
-                try:
-                    from axiom.core.tools.self_repair import SelfRepairTool
-                    SelfRepairTool.capture_error(tool_exc, tb_str)
-                except Exception:
-                    pass
-                # Still append the error as tool result so the LLM knows
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
