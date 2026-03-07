@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -48,14 +49,7 @@ async def generate_plan(
     messages: list[dict[str, str]],
     tool_names: list[str],
 ) -> list[dict[str, Any]]:
-    """Generate a multi-step plan for PLAN mode.
-
-    Returns a list of plan steps, each with:
-    - step: int
-    - action: str (tool name or "think")
-    - description: str
-    - args: dict
-    """
+    """Generate a multi-step plan for PLAN mode."""
     system_prompt = PLAN_SYSTEM.format(tool_names=", ".join(tool_names))
 
     plan_messages = [
@@ -71,19 +65,25 @@ async def generate_plan(
             if hasattr(delta, "content") and delta.content:
                 response_text += delta.content
 
-    # Parse the plan from the response
-    try:
-        # Try to extract JSON from the response
-        start = response_text.find("[")
-        end = response_text.rfind("]") + 1
-        if start >= 0 and end > start:
-            plan = json.loads(response_text[start:end])
-            return plan
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.warning("Failed to parse plan: %s", e)
+    plan = _extract_json_array(response_text)
+    if plan is not None:
+        # Validate each step has required fields
+        validated = []
+        for i, step in enumerate(plan):
+            if not isinstance(step, dict):
+                continue
+            validated.append({
+                "step": step.get("step", i + 1),
+                "action": step.get("action", "think"),
+                "description": step.get("description", ""),
+                "args": step.get("args", {}),
+            })
+        if validated:
+            return validated
 
-    # Fallback: single-step plan
-    return [{"step": 1, "action": "think", "description": response_text, "args": {}}]
+    # Fallback: wrap the response as a single think step
+    logger.warning("Plan parse failed, falling back to single think step")
+    return [{"step": 1, "action": "think", "description": response_text[:500], "args": {}}]
 
 
 async def generate_react_thought(
@@ -92,15 +92,11 @@ async def generate_react_thought(
     react_trace: list[dict[str, Any]],
     tool_names: list[str],
 ) -> dict[str, Any]:
-    """Generate a single ReAct thought+action for REACT mode.
-
-    Returns dict with: thought, action, args
-    """
+    """Generate a single ReAct thought+action."""
     system_prompt = REACT_THOUGHT_SYSTEM.format(tool_names=", ".join(tool_names))
 
-    # Build context from react trace
     trace_context = ""
-    for entry in react_trace[-5:]:  # Keep last 5 steps
+    for entry in react_trace[-5:]:
         trace_context += f"\nThought: {entry.get('thought', '')}"
         trace_context += f"\nAction: {entry.get('action', '')}"
         if 'observation' in entry:
@@ -125,14 +121,116 @@ async def generate_react_thought(
             if hasattr(delta, "content") and delta.content:
                 response_text += delta.content
 
-    # Parse the thought from the response
-    try:
-        start = response_text.find("{")
-        end = response_text.rfind("}") + 1
-        if start >= 0 and end > start:
-            thought = json.loads(response_text[start:end])
-            return thought
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.warning("Failed to parse react thought: %s", e)
+    result = _extract_json_object(response_text)
+    if result is not None:
+        return {
+            "thought": result.get("thought", ""),
+            "action": result.get("action", "finish"),
+            "args": result.get("args", {}),
+        }
 
     return {"thought": response_text, "action": "finish", "args": {"answer": response_text}}
+
+
+# ── Robust JSON Extraction ─────────────────────────────────────────────────────
+
+
+def _extract_json_array(text: str) -> list | None:
+    """Extract a JSON array from LLM response text.
+
+    Tries multiple strategies:
+    1. Code fence extraction (```json ... ```)
+    2. Balanced bracket matching (skipping brackets inside strings)
+    3. Raw parse of entire text
+    """
+    # Strategy 1: Extract from code fence
+    fence_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: Find the first [ that starts a valid JSON array
+    for i, ch in enumerate(text):
+        if ch == '[':
+            end = _find_matching_bracket(text, i, '[', ']')
+            if end is not None:
+                try:
+                    return json.loads(text[i:end + 1])
+                except json.JSONDecodeError:
+                    continue  # This [ wasn't the start, try next
+
+    # Strategy 3: Try parsing the whole text
+    try:
+        result = json.loads(text.strip())
+        if isinstance(result, list):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """Extract a JSON object from LLM response text."""
+    # Strategy 1: Code fence
+    fence_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: Balanced brace matching
+    for i, ch in enumerate(text):
+        if ch == '{':
+            end = _find_matching_bracket(text, i, '{', '}')
+            if end is not None:
+                try:
+                    return json.loads(text[i:end + 1])
+                except json.JSONDecodeError:
+                    continue
+
+    # Strategy 3: Parse whole text
+    try:
+        result = json.loads(text.strip())
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
+
+def _find_matching_bracket(
+    text: str, start: int, open_ch: str, close_ch: str
+) -> int | None:
+    """Find the matching closing bracket, respecting string context.
+
+    Returns the index of the closing bracket, or None if not found.
+    """
+    depth = 0
+    in_string = False
+    escape = False
+
+    for j in range(start, len(text)):
+        c = text[j]
+        if escape:
+            escape = False
+            continue
+        if c == '\\' and in_string:
+            escape = True
+            continue
+        if c == '"' and not escape:
+            in_string = not in_string
+            continue
+        if not in_string:
+            if c == open_ch:
+                depth += 1
+            elif c == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return j
+
+    return None
