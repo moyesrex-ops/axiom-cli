@@ -1086,42 +1086,63 @@ class AxiomApp:
     # ── Display helpers ───────────────────────────────────────────
 
     def _show_help(self) -> None:
-        table = Table(title="Axiom Commands", border_style=AXIOM_CYAN)
-        table.add_column("Command", style=f"bold {AXIOM_CYAN}")
-        table.add_column("Description")
-        commands = [
-            ("/help", "Show this help"),
-            ("/model <name>", "Switch LLM (opus, sonnet, vertex-opus, vertex-sonnet, vertex-flash, gemini, groq, etc.)"),
-            ("/models", "Alias for /model list — show all available models"),
-            ("/model list", "Show all available models and their status"),
-            ("/model cost", "Show token usage and estimated cost"),
-            ("/model auto", "Enable smart auto-routing (best model per task)"),
-            ("/tools", "List available tools"),
-            ("/memory search <q>", "Search agent memory"),
-            ("/memory save <text>", "Save a fact to memory"),
-            ("/memory stats", "Show memory statistics"),
-            ("/agent <task>", "Run task through agent (PLAN/REACT mode)"),
-            ("/council <question>", "Multi-LLM consensus deliberation"),
-            ("/skills [list|search|show]", "Browse domain knowledge skills"),
-            ("/fix [context]", "GOD MODE: Self-diagnose and auto-repair errors"),
-            ("/selftest", "GOD MODE: Verify all systems are operational"),
-            ("/agents", "List running sub-agents"),
-            ("/connect telegram <token>", "Connect Telegram bot (writes config + starts mirroring)"),
-            ("/mcp list", "List MCP server connections"),
-            ("/mcp connect <name>", "Connect to an MCP server"),
-            ("/voice", "Toggle voice input (Whisper STT)"),
-            ("/think", "Extended thinking info"),
-            ("/trace", "Toggle agent trace visibility"),
-            ("/yolo", "Toggle auto-approve for tool calls"),
-            ("/compact", "Compress conversation history via LLM summary"),
-            ("/reset", "Clear conversation history"),
-            ("/history", "Show conversation history summary"),
-            ("/clear", "Clear screen"),
-            ("/exit", "Save session and quit"),
+        """Display grouped command reference."""
+        from rich.tree import Tree
+
+        groups = [
+            ("Core", AXIOM_CYAN, [
+                ("/help", "Show this help"),
+                ("/clear", "Clear screen"),
+                ("/reset", "Clear conversation history"),
+                ("/history", "Show conversation summary"),
+                ("/compact", "Compress history via LLM summary"),
+                ("/exit", "Save session and quit"),
+            ]),
+            ("LLM", AXIOM_PURPLE, [
+                ("/model <name>", "Switch LLM (opus, sonnet, gemini, groq, etc.)"),
+                ("/models", "Show all available models"),
+                ("/model cost", "Show token usage and cost"),
+                ("/model auto", "Enable smart auto-routing"),
+                ("/think", "Extended thinking info"),
+                ("/council <q>", "Multi-LLM consensus deliberation"),
+            ]),
+            ("Tools & Agent", AXIOM_GREEN, [
+                ("/tools", "List available tools"),
+                ("/agent <task>", "Run task through agent (PLAN/REACT)"),
+                ("/yolo", "Toggle auto-approve tool calls"),
+                ("/trace", "Toggle agent trace visibility"),
+            ]),
+            ("Memory & Skills", AXIOM_YELLOW, [
+                ("/memory search <q>", "Search agent memory"),
+                ("/memory save <text>", "Save a fact to memory"),
+                ("/memory stats", "Show memory statistics"),
+                ("/skills", "Browse domain knowledge skills"),
+            ]),
+            ("Integrations", AXIOM_CYAN, [
+                ("/connect telegram <token>", "Connect Telegram bot"),
+                ("/mcp list", "List MCP server connections"),
+                ("/mcp connect <name>", "Connect to an MCP server"),
+                ("/voice", "Toggle voice input (Whisper STT)"),
+            ]),
+            ("GOD MODE", AXIOM_RED, [
+                ("/fix [context]", "Self-diagnose and auto-repair"),
+                ("/selftest", "Verify all systems operational"),
+                ("/agents", "List running sub-agents"),
+            ]),
         ]
-        for cmd, desc in commands:
-            table.add_row(cmd, desc)
-        console.print(table)
+
+        tree = Tree(Text.from_markup(f"[bold {AXIOM_CYAN}]Axiom Commands[/]"))
+
+        for group_name, color, commands in groups:
+            branch = tree.add(Text.from_markup(f"[bold {color}]{group_name}[/]"))
+            for cmd, desc in commands:
+                branch.add(Text.from_markup(
+                    f"[bold {color}]{cmd:<30}[/]  [{AXIOM_DIM}]{desc}[/]"
+                ))
+
+        console.print()
+        console.print(Panel(tree, border_style=AXIOM_CYAN, padding=(0, 1), expand=False))
+        console.print()
 
     def _show_models(self) -> None:
         """Show all available models grouped by provider with aliases."""
@@ -2365,10 +2386,33 @@ class AxiomApp:
         async def _on_remote_message(msg: dict) -> None:
             ch = msg.get("channel", "")
             role = msg.get("role", "")
-            content = msg.get("content", "")[:80]
-            if ch != "cli" and role == "user":
+            content = msg.get("content", "")
+
+            if ch == "cli":
+                return  # Don't echo our own messages
+
+            if role == "user":
+                display = content[:80]
+                ellipsis = "..." if len(content) > 80 else ""
                 console.print(
-                    f"\n  [{AXIOM_CYAN}]📱 {ch}: {content}...[/]"
+                    f"\n  [{AXIOM_CYAN}]📱 {ch}: {display}{ellipsis}[/]"
+                )
+            elif role == "assistant":
+                display = content[:120]
+                ellipsis = "..." if len(content) > 120 else ""
+                console.print(
+                    Panel(
+                        Text.from_markup(
+                            f"[{AXIOM_PURPLE}]{display}{ellipsis}[/]"
+                        ),
+                        title=Text.from_markup(
+                            f"[bold {AXIOM_PURPLE}]🤖 axiom → {ch}[/]"
+                        ),
+                        title_align="left",
+                        border_style=AXIOM_PURPLE,
+                        padding=(0, 1),
+                        expand=False,
+                    )
                 )
 
         self.message_bus.subscribe("cli", _on_remote_message)
@@ -2380,6 +2424,7 @@ class AxiomApp:
             memory_count=memory_count,
             skill_count=skill_count,
             mcp_count=mcp_tool_count,
+            telegram_active=self._telegram_active,
         )
 
         # Hint for first-time users

@@ -69,6 +69,11 @@ _SLASH_COMMANDS: list[str] = [
     "/voice",
     "/quit",
     "/exit",
+    "/connect",
+    "/connect telegram",
+    "/fix",
+    "/selftest",
+    "/models",
 ]
 
 _PROMPT_STYLE = PTStyle.from_dict(

@@ -53,6 +53,9 @@ class StreamRenderer:
     plain ``console.print`` calls.
     """
 
+    _FILE_TOOLS = frozenset({"read_file"})
+    _LIST_TOOLS = frozenset({"glob", "grep"})
+
     def __init__(self, console: Console | None = None) -> None:
         self._console = console or make_console()
         self._live: Live | None = None
@@ -231,27 +234,10 @@ class StreamRenderer:
         success: bool = True,
         duration_ms: int = 0,
     ) -> None:
-        """Render the result of a completed tool call.
-
-        Parameters
-        ----------
-        tool_name:
-            Name of the tool that ran.
-        result:
-            Textual output / return value of the tool.
-        success:
-            Whether the execution succeeded.
-        duration_ms:
-            Wall-clock time in milliseconds.
-        """
+        """Render the result of a completed tool call."""
         icon = "\u2713" if success else "\u2717"
         color = AXIOM_GREEN if success else AXIOM_RED
         status_style = STYLE_SUCCESS if success else STYLE_ERROR
-
-        # Truncate very long results for display
-        display_result = result
-        if len(display_result) > 2000:
-            display_result = display_result[:1997] + "..."
 
         title_text = Text()
         title_text.append(f" {icon} ", style=status_style)
@@ -259,8 +245,10 @@ class StreamRenderer:
         if duration_ms > 0:
             title_text.append(f"  {duration_ms}ms", style=STYLE_DIM)
 
+        body = self._render_tool_body(tool_name, result, success)
+
         panel = Panel(
-            Text(display_result, overflow="fold"),
+            body,
             title=title_text,
             title_align="left",
             border_style=Style(color=color, dim=True),
@@ -268,6 +256,113 @@ class StreamRenderer:
             expand=False,
         )
         self._console.print(panel)
+
+    # ── Smart Tool Body Renderers ──────────────────────────────────────
+
+    def _render_tool_body(self, tool_name: str, result: str, success: bool) -> Any:
+        """Choose the best Rich renderable for a tool result."""
+        if not success:
+            return Text(result[:2000], style=STYLE_ERROR, overflow="fold")
+
+        if tool_name in self._FILE_TOOLS:
+            return self._render_file_content(result)
+
+        if tool_name in self._LIST_TOOLS:
+            return self._render_file_list(result)
+
+        return self._render_truncated(result)
+
+    def _render_file_content(self, result: str) -> Any:
+        """Render read_file output with syntax highlighting."""
+        lines = result.split("\n", 1)
+        header = lines[0] if lines else ""
+        body = lines[1] if len(lines) > 1 else ""
+
+        # Extract filepath from header: [/path/to/file.py] N lines...
+        filepath = ""
+        if header.startswith("[") and "]" in header:
+            filepath = header[1 : header.index("]")]
+
+        lexer = _guess_lexer(filepath)
+
+        # Strip line numbers (format: "     1\tcontent")
+        stripped: list[str] = []
+        for line in body.split("\n"):
+            if "\t" in line:
+                stripped.append(line.split("\t", 1)[1])
+            else:
+                stripped.append(line)
+
+        code = "\n".join(stripped)
+
+        max_display = 3000
+        truncated = len(code) > max_display
+        if truncated:
+            code = code[:max_display]
+            last_nl = code.rfind("\n")
+            if last_nl > max_display * 0.8:
+                code = code[:last_nl]
+
+        parts: list[Any] = [
+            Text.from_markup(f"[{AXIOM_DIM}]{header}[/]"),
+        ]
+
+        if code.strip():
+            parts.append(
+                Syntax(
+                    code,
+                    lexer,
+                    theme="monokai",
+                    line_numbers=True,
+                    word_wrap=True,
+                )
+            )
+
+        if truncated:
+            remaining = len(result) - max_display
+            parts.append(
+                Text.from_markup(f"\n[{AXIOM_DIM}]... {remaining:,} more chars[/]")
+            )
+
+        return Group(*parts)
+
+    def _render_file_list(self, result: str) -> Any:
+        """Render glob/grep output compactly."""
+        lines = result.strip().split("\n")
+        summary = lines[0] if lines else result
+        display_lines = lines[1:21]
+        remaining = len(lines) - 21 if len(lines) > 21 else 0
+
+        parts: list[Any] = [
+            Text.from_markup(f"[bold {AXIOM_CYAN}]{summary}[/]"),
+        ]
+        if display_lines:
+            parts.append(
+                Text("\n".join(display_lines), style=STYLE_DIM, overflow="fold")
+            )
+        if remaining > 0:
+            parts.append(
+                Text.from_markup(f"\n[{AXIOM_DIM}]... {remaining} more entries[/]")
+            )
+
+        return Group(*parts)
+
+    def _render_truncated(self, result: str) -> Any:
+        """Render generic tool output with smart truncation."""
+        max_display = 2000
+        if len(result) <= max_display:
+            return Text(result, overflow="fold")
+
+        truncated = result[:max_display]
+        last_nl = truncated.rfind("\n")
+        if last_nl > max_display * 0.7:
+            truncated = truncated[:last_nl]
+
+        remaining = len(result) - len(truncated)
+        return Group(
+            Text(truncated, overflow="fold"),
+            Text.from_markup(f"\n[{AXIOM_DIM}]... {remaining:,} more chars[/]"),
+        )
 
     # ── Plan Display ──────────────────────────────────────────────────────
 
@@ -368,6 +463,30 @@ class StreamRenderer:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+_EXTENSION_LEXER_MAP: dict[str, str] = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".tsx": "tsx", ".jsx": "jsx", ".json": "json",
+    ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+    ".md": "markdown", ".html": "html", ".css": "css",
+    ".sql": "sql", ".sh": "bash", ".bash": "bash",
+    ".rs": "rust", ".go": "go", ".java": "java",
+    ".c": "c", ".cpp": "cpp", ".h": "c", ".rb": "ruby",
+    ".xml": "xml", ".ini": "ini", ".env": "bash",
+    ".mq5": "c", ".mq4": "c",
+}
+
+
+def _guess_lexer(filepath: str) -> str:
+    """Guess the Pygments lexer name from a file path extension."""
+    if not filepath:
+        return "text"
+    dot_idx = filepath.rfind(".")
+    if dot_idx >= 0:
+        ext = filepath[dot_idx:].lower()
+        return _EXTENSION_LEXER_MAP.get(ext, "text")
+    return "text"
 
 
 def _format_args(args: dict[str, Any], max_value_len: int = 300) -> str:

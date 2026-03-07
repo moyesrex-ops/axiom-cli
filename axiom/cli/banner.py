@@ -40,6 +40,7 @@ def print_banner(
     memory_count: int = 0,
     skill_count: int = 0,
     mcp_count: int = 0,
+    telegram_active: bool = False,
 ) -> None:
     """Print the Axiom startup banner with session metadata.
 
@@ -65,17 +66,16 @@ def print_banner(
     body.append("\n")
 
     # Version / model / tools tagline
-    extras = []
+    cap_parts = [f"{tool_count} tools"]
     if skill_count > 0:
-        extras.append(f"{skill_count} skills")
+        cap_parts.append(f"{skill_count} skills")
     if mcp_count > 0:
-        extras.append(f"{mcp_count} MCP")
-    extras_str = f"  [{AXIOM_CYAN}]|[/]  [{AXIOM_DIM}]{' + '.join(extras)}[/]" if extras else ""
+        cap_parts.append(f"{mcp_count} MCP")
+
     tagline = Text.from_markup(
-        f"  [{AXIOM_DIM}]v1.0.0[/]  [{AXIOM_CYAN}]|[/]  "
-        f"[bold {AXIOM_CYAN}]{model_name}[/]  [{AXIOM_CYAN}]|[/]  "
-        f"[{AXIOM_DIM}]{tool_count} tools[/]{extras_str}  [{AXIOM_CYAN}]|[/]  "
-        f"[{AXIOM_PURPLE}]\u221e memory[/]"
+        f"  [{AXIOM_DIM}]v1.0.0[/]  [{AXIOM_CYAN}]\u2502[/]  "
+        f"[bold {AXIOM_CYAN}]{model_name}[/]  [{AXIOM_CYAN}]\u2502[/]  "
+        f"[{AXIOM_DIM}]{' \u00b7 '.join(cap_parts)}[/]"
     )
     body.append_text(tagline)
     body.append("\n\n")
@@ -103,6 +103,20 @@ def print_banner(
         f"[{AXIOM_DIM}]|  {datetime.now().strftime('%Y-%m-%d %H:%M')}[/]"
     )
     body.append_text(mem_line)
+
+    # Integration status
+    integrations: list[str] = []
+    if telegram_active:
+        integrations.append(f"[{AXIOM_GREEN}]\u25cf Telegram[/]")
+    else:
+        integrations.append(f"[{AXIOM_DIM}]\u25cb Telegram[/]")
+    if mcp_count > 0:
+        integrations.append(f"[{AXIOM_GREEN}]\u25cf MCP ({mcp_count})[/]")
+
+    if integrations:
+        int_line = Text.from_markup(f"  {'  '.join(integrations)}")
+        body.append("\n")
+        body.append_text(int_line)
 
     # ── Render ────────────────────────────────────────────────────────────
     panel = Panel(

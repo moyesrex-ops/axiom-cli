@@ -38,6 +38,7 @@ AXIOM_GREEN = "#22c55e"
 AXIOM_YELLOW = "#eab308"
 AXIOM_RED = "#ef4444"
 AXIOM_DIM = "#6b7280"
+AXIOM_ORANGE = "#f97316"
 
 # ── Semantic Aliases ──────────────────────────────────────────────────────────
 
@@ -65,6 +66,8 @@ STYLE_ERROR = Style(color=AXIOM_RED, bold=True)
 STYLE_INFO = Style(color=AXIOM_CYAN)
 STYLE_SUCCESS = Style(color=AXIOM_GREEN, bold=True)
 STYLE_DIM = Style(color=AXIOM_DIM, dim=True)
+STYLE_HIGHLIGHT = Style(color="#f97316", bold=True)
+STYLE_FILE_HEADER = Style(color=AXIOM_DIM)
 
 # ── Risk-Level Style Map ──────────────────────────────────────────────────────
 
@@ -97,6 +100,7 @@ AXIOM_THEME = Theme(
         "axiom.error": AXIOM_RED,
         "axiom.dim": AXIOM_DIM,
         "axiom.prompt": f"bold {AXIOM_CYAN}",
+        "axiom.highlight": f"bold #f97316",
     }
 )
 
