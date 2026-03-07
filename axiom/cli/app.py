@@ -350,26 +350,10 @@ class AxiomApp:
             except Exception as exc:
                 logger.debug("Skipping VisionTool: %s", exc)
 
-        # Sub-agent spawning (needs router + registry)
-        if self.router is not None:
-            try:
-                from axiom.core.tools.agent_spawn import SpawnAgentTool
-
-                self.registry.register(
-                    SpawnAgentTool(router=self.router, registry=self.registry)
-                )
-                loaded += 1
-            except Exception as exc:
-                logger.debug("Skipping SpawnAgentTool: %s", exc)
-
-        # Dynamic tool creation (needs registry)
-        try:
-            from axiom.core.tools.tool_create import ToolCreateTool
-
-            self.registry.register(ToolCreateTool(registry=self.registry))
-            loaded += 1
-        except Exception as exc:
-            logger.debug("Skipping ToolCreateTool: %s", exc)
+        # NOTE: SpawnAgentTool and ToolCreateTool REMOVED.
+        # They caused the agent to create meta-tools instead of doing
+        # actual work (bash + write_file). The agent should use its
+        # existing tools to accomplish tasks, not generate new ones.
 
         # Memory tools (need MemoryManager instance)
         if self.memory is not None:
@@ -385,25 +369,10 @@ class AxiomApp:
             except Exception as exc:
                 logger.debug("Skipping MemoryTools: %s", exc)
 
-        # ── GOD MODE: Self-repair tool ─────────────────────────────
-        try:
-            from axiom.core.tools.self_repair import SelfRepairTool
-
-            self.registry.register(SelfRepairTool())
-            loaded += 1
-        except Exception as exc:
-            logger.debug("Skipping SelfRepairTool: %s", exc)
-
-        # Load user-created custom tools from ~/.axiom/tools/
-        try:
-            from axiom.core.tools.tool_create import load_custom_tools
-
-            custom_count = load_custom_tools(self.registry)
-            loaded += custom_count
-            if custom_count:
-                logger.info("Loaded %d custom tools", custom_count)
-        except Exception as exc:
-            logger.debug("Custom tool loading failed: %s", exc)
+        # NOTE: SelfRepairTool and custom tool loading REMOVED.
+        # Self-repair was a fiction — the tool doesn't exist.
+        # Custom tool loading invited the agent to create meta-tools
+        # instead of using bash/write_file to accomplish tasks.
 
         logger.debug("Loaded %d tools total", loaded)
         return self.registry.count

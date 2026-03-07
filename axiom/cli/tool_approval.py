@@ -134,46 +134,40 @@ class ToolApproval:
         risk_level: str,
         description: str,
     ) -> None:
-        """Display a Rich panel showing the tool call details."""
-        # Color based on risk
-        border_color = {
+        """Display a compact approval prompt — NOT a massive bordered panel.
+
+        Shows the tool name, risk badge, and a short preview of the key
+        argument on 2-3 lines max.  Full args are only shown if the user
+        presses [E]dit.
+        """
+        risk_color = {
             "low": AXIOM_GREEN,
             "medium": AXIOM_YELLOW,
             "high": AXIOM_RED,
         }.get(risk_level, AXIOM_YELLOW)
 
-        risk_label = {
-            "low": f"[{AXIOM_GREEN}]LOW[/]",
-            "medium": f"[{AXIOM_YELLOW}]MEDIUM[/]",
-            "high": f"[{AXIOM_RED}]HIGH[/]",
-        }.get(risk_level, f"[{AXIOM_YELLOW}]UNKNOWN[/]")
+        risk_tag = risk_level.upper()
 
-        # Format args as JSON
-        args_str = json.dumps(tool_args, indent=2)
+        # Extract the most relevant arg for preview
+        preview = _compact_arg_preview(tool_name, tool_args)
 
-        # Build panel content
-        lines = [f"[bold]Risk:[/] {risk_label}"]
-        if description:
-            lines.append(f"[bold]Description:[/] {description}")
-        lines.append("")
-
-        # Show args with syntax highlighting for readability
-        if len(args_str) > 500:
-            lines.append(f"[bold]Arguments:[/]\n{args_str[:500]}...")
-        else:
-            lines.append(f"[bold]Arguments:[/]\n{args_str}")
-
-        content = "\n".join(lines)
-
+        self.console.print()
         self.console.print(
-            Panel(
-                content,
-                title=f"[bold {AXIOM_PURPLE}]Tool Call: {tool_name}[/]",
-                border_style=border_color,
-                expand=False,
-                padding=(1, 2),
-            )
+            f"  [{AXIOM_PURPLE}]\u26a1 {tool_name}[/]"
+            f"  [{risk_color}][{risk_tag}][/]"
         )
+        if preview:
+            # Truncate long previews (e.g. code blocks) to 3 lines
+            preview_lines = preview.split("\n")
+            if len(preview_lines) > 3:
+                shown = "\n".join(preview_lines[:3])
+                self.console.print(
+                    f"  [{AXIOM_DIM}]{shown}\n  ... ({len(preview_lines) - 3} more lines)[/]"
+                )
+            else:
+                self.console.print(f"  [{AXIOM_DIM}]{preview}[/]")
+        if description:
+            self.console.print(f"  [{AXIOM_DIM}]{description}[/]")
 
     def _edit_args(self, tool_args: dict[str, Any]) -> dict[str, Any] | None:
         """Allow the user to edit tool arguments interactively.
@@ -218,3 +212,41 @@ class ToolApproval:
                 f"  [{AXIOM_RED}]Invalid JSON: {e}. Using original args.[/]"
             )
             return tool_args
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+# Map of tool → which arg key to preview
+_PREVIEW_KEYS: dict[str, tuple[str, ...]] = {
+    "bash": ("command",),
+    "write_file": ("path", "file_path"),
+    "edit_file": ("path", "file_path"),
+    "create_file": ("path", "file_path"),
+    "code_exec": ("code",),
+    "git": ("command",),
+    "http_request": ("url",),
+    "web_fetch": ("url",),
+}
+
+
+def _compact_arg_preview(tool_name: str, args: dict[str, Any]) -> str:
+    """Return a short preview of the tool's key argument."""
+    if not args:
+        return ""
+
+    # Try known keys
+    for key in _PREVIEW_KEYS.get(tool_name, ()):
+        if key in args:
+            val = str(args[key])
+            if len(val) > 200:
+                return val[:200] + "..."
+            return val
+
+    # Fallback: first string arg
+    for key, val in args.items():
+        if isinstance(val, str) and val:
+            preview = val[:150]
+            return f"{key}: {preview}" + ("..." if len(val) > 150 else "")
+
+    return ""
