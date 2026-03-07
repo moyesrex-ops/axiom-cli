@@ -266,14 +266,12 @@ async def _run_plan_mode(
                     consecutive_failures += 1
                     # ── Retry hint injection ────────────────────────
                     # Tell the LLM to try a DIFFERENT tool or args
+                    # Log retry hint for trace only — don't pollute permanent messages
                     hint = (
                         f"[RETRY HINT] Tool '{action}' failed "
                         f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}). "
-                        f"You MUST try a DIFFERENT tool or DIFFERENT arguments. "
-                        f"Do NOT repeat the same failing call. "
-                        f"Available tools: {', '.join(tool_names)}"
+                        f"Try a DIFFERENT tool or arguments."
                     )
-                    messages.append({"role": "system", "content": hint})
                     if tracer:
                         tracer.log("RETRY", hint)
                 else:
@@ -400,15 +398,12 @@ async def _run_react_mode(
 
         if not result["success"]:
             consecutive_failures += 1
-            # ── Retry hint injection ────────────────────────
+            # Log retry hint for trace only — don't pollute permanent messages
             hint = (
                 f"[RETRY HINT] Tool '{action}' failed "
                 f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}). "
-                f"You MUST try a DIFFERENT tool or DIFFERENT arguments. "
-                f"Do NOT repeat the same failing call. "
-                f"Available tools: {', '.join(tool_names)}"
+                f"Try a DIFFERENT tool or arguments."
             )
-            messages.append({"role": "system", "content": hint})
             if tracer:
                 tracer.log("RETRY", hint)
         else:
